@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<meta charset="utf-8"/>
+<html>
+	<head>
+		<title>OrangeBot</title>
+		<style>
+		/* @author Orso Eric */
+		*
+		{
+			box-sizing: border-box;
+		}
+
+		body
+		{
+			background-color: #D0D0D0;
+		}
+		h1
+		{
+			color: blue;
+		}
+		p
+		{
+			color: red;
+		}
+		/*Slider*/
+		.slidecontainer
+		{
+			width: 100%;
+		}
+		</style>
+		<script type="text/javascript" src="/socket.io/socket.io.js"></script>
+		<script type="text/javascript" src="orangebot_key.js"></script>
+		<script type="text/javascript">
+			var host_ip = document.location.hostname;
+			console.log("connecting to host: ", host_ip);
+
+			//Connect to the server via websocket
+			var mysocket = io("http://" +host_ip +":8080");
+			//Long lived frame object
+			var last_frame;
+
+			//-----------------------------------------
+			//	CONNESSION ACKNOWLEDGE
+			//-----------------------------------------
+			//	Link is initiated by the client
+			//	Server sends a welcome message when link is estabilished
+			//	Server could send an auth token to keep track of individual clients and login data
+
+			mysocket.on
+			(
+				"welcome",
+				(message) =>
+				{
+					console.log("Server websocket connession acknoweldged... " +message.payload);
+				}
+			)
+
+			//-----------------------------------------
+			//	LINK CONTROLS
+			//-----------------------------------------
+			//	Link relevant controls to vars to speed up page
+			
+			//Link Sliders
+			var var_sld_speed_kp = document.getElementById("sld_speed_kp");
+			var var_sld_speed_ki = document.getElementById("sld_speed_ki");
+			var var_sld_speed_kd = document.getElementById("sld_speed_kd");
+			
+			//-----------------------------------------
+			//	SERVER->CLIENT CONTROLS
+			//-----------------------------------------
+			//	Server can send an async message to dinamically update the page without reloading
+			//	This is an example message with the server local date and time in string form
+
+			mysocket.on
+			(
+				"robot_status",
+				(message) =>
+				{
+					console.log( message );
+					//Show the robot irmware revision
+					fill_label("lbl_robot_signature", message.signature );
+					//AT4809 Performance Counters
+					fill_label("lbl_at4809_cpu_scan_frequency", message.AT4809CPU );
+					fill_label("lbl_at4809_rxi_bandwidth", message.AT4809RXI );
+					fill_label("lbl_at4809_txo_bandwidth", message.AT4809TXO );
+					fill_label("lbl_pwm0", message.pwm[0] );
+					fill_label("lbl_pwm1", message.pwm[1] );
+					fill_label("lbl_pwm2", message.pwm[2] );
+					fill_label("lbl_pwm3", message.pwm[3] );
+					fill_label("lbl_enc_pos0", message.enc_pos[0] );
+					fill_label("lbl_enc_pos1", message.enc_pos[1] );
+					fill_label("lbl_enc_spd0", message.enc_spd[0] );
+					fill_label("lbl_enc_spd1", message.enc_spd[1] );
+				}
+			)
+
+			function fill_label( label, payload )
+			{
+				window.document.getElementById(label).value=payload;
+			}
+
+			//-----------------------------------------
+			//	CLIENT->SERVER CONTROLS
+			//-----------------------------------------
+			//	Controls inside the webpage can emit async events to the server
+			//	In this example I have a push button and I catch keyboard strokes
+
+			//Handler for a pushbutton
+			function socket_button_handler()
+			{
+				mysocket.emit("myclick", { payload: "button was clicked" });
+				console.log("Button was clicked...");
+			}
+			
+			//Construct global speed pid var
+			var g_pid =
+			{
+				ctrl_mode : "off",
+				speed_kp : 0,
+				speed_ki : 0,
+				speed_kd : 0
+			}
+			
+			//Handler for sliders
+			function sld_speed_kp_handler()
+			{
+				//Save new value
+				g_pid.speed_kp = parseFloat(sld_speed_kp.value);
+				fill_label("lbl_speed_kp",sld_speed_kp.value);
+				//Emit Speed PID Parameter message
+				send_pid_message();
+			}
+			
+			//Handler for sliders
+			function sld_speed_ki_handler()
+			{
+				//Save new value
+				g_pid.speed_ki = parseFloat(sld_speed_ki.value);
+				fill_label("lbl_speed_ki",sld_speed_ki.value);
+				//Emit Speed PID Parameter message
+				send_pid_message();
+			}
+
+			//Handler for sliders
+			function sld_speed_kd_handler()
+			{
+				//Save new value
+				g_pid.speed_kd = parseFloat(sld_speed_kd.value);
+				fill_label("lbl_speed_kd",sld_speed_kd.value);
+				//Emit Speed PID Parameter message
+				send_pid_message();
+			}		
+			
+			//Handler for the Control Mode Radio Button
+			function rad_control_mode_handler( data )
+			{
+				//console.log("radio: ", data.value );
+				//Update the control mode on the control structure
+				g_pid.ctrl_mode = data.value;
+				//Emit Speed PID Parameter message. It holds the control mode as well
+				send_pid_message();
+			}
+			
+			//Send message to configure the PID parameters
+			function send_pid_message()
+			{
+				mysocket.emit("pid", g_pid );
+				console.log( g_pid );
+			}	
+			
+			//Listen for key strokes
+			window.document.addEventListener
+			(
+				"keydown",
+				function onEvent(event)
+				{
+					//Process key event and get current direction
+					f_change = process_key( event.key, 1 );
+					//If: direction has changed
+					if (f_change == true)
+					{
+						direction = get_direction();
+						mysocket.emit("direction", { direction });
+						console.log("keydown: " +event.key, direction);
+					}			
+				},
+				false
+			);
+
+			//Listen for key releases
+			window.document.addEventListener
+			(
+				"keyup",
+				function onEvent(event)
+				{
+					f_change = process_key( event.key, 0 );
+					//If: direction has changed
+					if (f_change == true)
+					{
+						direction = get_direction();
+						mysocket.emit("direction", { direction });
+						console.log("keydown: " +event.key, direction);
+					}	
+				},
+				false
+			);
+
+			//-----------------------------------------
+			//	PING-PONG
+			//-----------------------------------------
+			//	Server sends ping messages with a timestamp
+			//	Client answers with pongs to allow server to profile latency of the channel
+
+			//profile messages means the server wants to compute roundway trip
+			mysocket.on
+			(
+				"profile_ping",
+				(message) =>
+				{
+					//Answer back with the received timestamp so that server can compute roundway trip
+					mysocket.emit("profile_pong", { timestamp: message.timestamp });
+					console.log( "server wants a pong. server absolute timestamp[ms]: " +message.timestamp );
+				}
+			);
+
+		</script>
+	</head>
+	<body>
+		<h1>OrangeBot FPV Remote Controls</h1>
+		<p>Websocket Button.<button id="my_button" type="button" onclick="socket_button_handler()">Websocket Button!</button></p>
+
+		<p>Robot Firmware revision<input id="lbl_robot_signature" type="text" value="" size="20"></p>
+		<p>Robot AT4809 Performance<input id="lbl_at4809_cpu_scan_frequency" type="text" value="" size="20"> UART Bandwidth <input id="lbl_at4809_rxi_bandwidth" type="text" value="" size="20"> <input id="lbl_at4809_txo_bandwidth" type="text" value="" size="20"></p>
+
+		<p>Robot PWM | Channel 0: <input id="lbl_pwm0" type="text" value="" size="20"> | Channel 1: <input id="lbl_pwm1" type="text" value="" size="20"> | Channel 2: <input id="lbl_pwm2" type="text" value="" size="20"> | Channel 3: <input id="lbl_pwm3" type="text" value="" size="20"></p>
+		<p>Robot Encoder Position | Channel 0: <input id="lbl_enc_pos0" type="text" value="" size="20"> | Channel 1: <input id="lbl_enc_pos1" type="text" value="" size="20"></p>
+		<p>Robot Encoder Speed | Channel 0: <input id="lbl_enc_spd0" type="text" value="" size="20"> | Channel 1: <input id="lbl_enc_spd1" type="text" value="" size="20"></p>
+		
+		<p>Robot Control Mode: </p>
+			<p><input type="radio" name="rad_control_mode" value="off" onclick="rad_control_mode_handler(this)" checked>OFF<br>
+			<input type="radio" name="rad_control_mode" onclick="rad_control_mode_handler(this)" value="pwm">PWM<br>
+			<input type="radio" name="rad_control_mode" onclick="rad_control_mode_handler(this)" value="spd">Speed PID<br>  
+		</p>
+		
+		<div class="slidecontainer">
+			<p>Speed PID:
+				KP: <input id="lbl_speed_kp" type="text" value="" size="20"> <input type="range" id="sld_speed_kp" min="-100" max="100" value="0" step="10" onchange="sld_speed_kp_handler()">
+				KI: <input id="lbl_speed_ki" type="text" value="" size="20"> <input type="range" id="sld_speed_ki" min="-100" max="100" value="0" step="10" onchange="sld_speed_ki_handler()">
+				KD: <input id="lbl_speed_kd" type="text" value="" size="20"> <input type="range" id="sld_speed_kd" min="-100" max="100" value="0" step="10" onchange="sld_speed_kd_handler()">
+			</p>
+		</div>
+	</body>
+</html>
